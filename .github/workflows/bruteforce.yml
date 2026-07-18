@@ -16,28 +16,36 @@ on:
 jobs:
   bruteforce:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours
+    timeout-minutes: 360
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq curl wget
       
-      - name: Download rockyou.txt
+      - name: Download rockyou
         if: inputs.phase == 'all' || inputs.phase == 'rockyou'
+        continue-on-error: true
         run: |
-          wget -q https://github.com/danielmiessler/SecLists/raw/master/Passwords/Common-Credentials/rockyou.txt.tar.gz
-          tar -xzf rockyou.txt.tar.gz
-          mv rockyou.txt rockyou_full.txt
+          wget -q --timeout=30 "https://github.com/danielmiessler/SecLists/raw/master/Passwords/Common-Credentials/rockyou.txt.tar.gz" -O rockyou.txt.tar.gz || \
+          wget -q --timeout=30 "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/rockyou.txt" -O rockyou_filtered.txt
+          if [ -f rockyou.txt.tar.gz ]; then
+            tar -xzf rockyou.txt.tar.gz 2>/dev/null || true
+            [ -f rockyou.txt ] && mv rockyou.txt rockyou_filtered.txt
+          fi
+          if [ -f rockyou_filtered.txt ]; then
+            echo "Rockyou downloaded: $(wc -l < rockyou_filtered.txt) lines"
+          else
+            echo "WARNING: rockyou download failed, skipping Phase 2"
+          fi
       
       - name: Run Brute Force
+        continue-on-error: true
         run: |
           chmod +x bruteforce.sh
-          ./bruteforce.sh
+          bash bruteforce.sh || true
         env:
           PHASE: ${{ inputs.phase }}
       
@@ -50,18 +58,23 @@ jobs:
             results.txt
             bruteforce.log
           retention-days: 30
+          if-no-files-found: ignore
       
       - name: Summary
         if: always()
         run: |
           echo "## Brute Force Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f results.txt ]; then
+          if [ -f results.txt ] && [ -s results.txt ]; then
             echo "### HITS FOUND:" >> $GITHUB_STEP_SUMMARY
             cat results.txt >> $GITHUB_STEP_SUMMARY
           else
             echo "No valid credentials found." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Log:" >> $GITHUB_STEP_SUMMARY
-          tail -20 bruteforce.log >> $GITHUB_STEP_SUMMARY
+          if [ -f bruteforce.log ]; then
+            echo "### Last 20 lines of log:" >> $GITHUB_STEP_SUMMARY
+            tail -20 bruteforce.log >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No log file found." >> $GITHUB_STEP_SUMMARY
+          fi
