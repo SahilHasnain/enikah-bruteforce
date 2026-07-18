@@ -1,0 +1,67 @@
+name: Brute Force Attack
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'Phase to run (1=targeted, 2=rockyou, all=both)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - targeted
+          - rockyou
+
+jobs:
+  bruteforce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl
+      
+      - name: Download rockyou.txt
+        if: inputs.phase == 'all' || inputs.phase == 'rockyou'
+        run: |
+          wget -q https://github.com/danielmiessler/SecLists/raw/master/Passwords/Common-Credentials/rockyou.txt.tar.gz
+          tar -xzf rockyou.txt.tar.gz
+          mv rockyou.txt rockyou_full.txt
+      
+      - name: Run Brute Force
+        run: |
+          chmod +x bruteforce.sh
+          ./bruteforce.sh
+        env:
+          PHASE: ${{ inputs.phase }}
+      
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bruteforce-results-${{ github.run_id }}
+          path: |
+            results.txt
+            bruteforce.log
+          retention-days: 30
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Brute Force Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f results.txt ]; then
+            echo "### HITS FOUND:" >> $GITHUB_STEP_SUMMARY
+            cat results.txt >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No valid credentials found." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Log:" >> $GITHUB_STEP_SUMMARY
+          tail -20 bruteforce.log >> $GITHUB_STEP_SUMMARY
