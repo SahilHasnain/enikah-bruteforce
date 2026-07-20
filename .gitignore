@@ -1,5 +1,5 @@
 results.txt
 bruteforce.log
-rockyou_filtered.txt
-rockyou_full.txt
 *.tar.gz
+config.bat
+node_modules
